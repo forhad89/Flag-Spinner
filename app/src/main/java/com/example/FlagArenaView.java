@@ -229,38 +229,17 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
     }
 
     private void configurePacingForDuration(int durationMinutes) {
-        this.selectedDurationMs = Math.max(1, durationMinutes) * 60L * 1000L;
+        int clampedMins = Math.max(1, Math.min(180, durationMinutes));
+        this.selectedDurationMs = clampedMins * 60L * 1000L;
         this.gapSweep = GAP_SWEEP_DEGREES;
 
         float refRadius = Math.max(240f, maxArenaRadius);
         gravityAccel = refRadius * 0.68f;
-        switch (durationMinutes) {
-            case 2:
-                baseBallSpeed = refRadius * 1.05f;
-                gapRotationSpeedDegPerSec = 26f;
-                break;
-            case 5:
-                baseBallSpeed = refRadius * 0.94f;
-                gapRotationSpeedDegPerSec = 23f;
-                break;
-            case 7:
-                baseBallSpeed = refRadius * 0.88f;
-                gapRotationSpeedDegPerSec = 21f;
-                break;
-            case 15:
-                baseBallSpeed = refRadius * 0.80f;
-                gapRotationSpeedDegPerSec = 19f;
-                break;
-            case 30:
-                baseBallSpeed = refRadius * 0.74f;
-                gapRotationSpeedDegPerSec = 17f;
-                break;
-            case 60:
-            default:
-                baseBallSpeed = refRadius * 0.68f;
-                gapRotationSpeedDegPerSec = 15f;
-                break;
-        }
+
+        // Smooth interpolation across 1 to 180 minutes
+        float norm = (float) (Math.log(clampedMins) / Math.log(180.0)); // 0.0 at 1 min -> 1.0 at 180 mins
+        baseBallSpeed = refRadius * (1.10f - 0.44f * norm);
+        gapRotationSpeedDegPerSec = 28f - 14f * norm;
     }
 
     public void startSimulation(int durationMinutes) {

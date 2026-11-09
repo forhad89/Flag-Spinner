@@ -2,6 +2,9 @@ package com.example;
 
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioTrack;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -10,6 +13,7 @@ import android.view.Window;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.activity.ComponentActivity;
@@ -17,15 +21,16 @@ import androidx.activity.ComponentActivity;
 import java.util.Locale;
 
 /**
- * MainActivity managing user duration inputs (2, 5, 7, 15, 30, 60 mins),
+ * MainActivity managing user duration inputs (1 to 180 mins via SeekBar slider and - / + buttons),
  * live countdown timer (clickable to stop/pause the simulation),
- * speed multiplier button (boosts flag speed immediately),
- * remaining flag counter, and UI visibility transitions.
+ * speed multiplier button (1x, 2x, 5x, 8x),
+ * remaining flag counter, victory chime, and UI visibility transitions.
  */
 public class MainActivity extends ComponentActivity implements FlagArenaView.ArenaEventListener {
 
-    private static final int[] DURATION_OPTIONS_MINUTES = new int[]{2, 5, 7, 15, 30, 60};
-    private static final float[] SPEED_MULTIPLIERS = new float[]{1.0f, 2.0f, 4.0f, 8.0f};
+    public static final int MIN_DURATION_MINUTES = 1;
+    public static final int MAX_DURATION_MINUTES = 180;
+    private static final float[] SPEED_MULTIPLIERS = new float[]{1.0f, 2.0f, 5.0f, 8.0f};
 
     private FlagArenaView flagArenaView;
     private TextView tvRemainingCounter;
@@ -39,7 +44,10 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
     private TextView tvWinnerSubtitle;
 
     private LinearLayout bottomControlPanel;
-    private TextView[] durationChips;
+    private TextView tvDurationLabel;
+    private TextView btnMinusDuration;
+    private SeekBar seekBarDuration;
+    private TextView btnPlusDuration;
     private Button btnStartSimulation;
 
     private int selectedDurationMinutes = 2;
@@ -90,12 +98,11 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
         setContentView(R.layout.activity_main);
 
         bindViews();
-        setupDurationChips();
+        setupDurationSliderAndButtons();
         setupActions();
 
         updateRemainingCounterDisplay(FlagBall.TOTAL_COUNTRIES, FlagBall.TOTAL_COUNTRIES);
-        remainingTimeMs = selectedDurationMinutes * 60L * 1000L;
-        updateTimerDisplay(remainingTimeMs, false);
+        applySelectedDuration(selectedDurationMinutes, true);
     }
 
     private void bindViews() {
@@ -111,48 +118,64 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
         tvWinnerSubtitle = findViewById(R.id.tvWinnerSubtitle);
 
         bottomControlPanel = findViewById(R.id.bottomControlPanel);
+        tvDurationLabel = findViewById(R.id.tvDurationLabel);
+        btnMinusDuration = findViewById(R.id.btnMinusDuration);
+        seekBarDuration = findViewById(R.id.seekBarDuration);
+        btnPlusDuration = findViewById(R.id.btnPlusDuration);
         btnStartSimulation = findViewById(R.id.btnStartSimulation);
-
-        durationChips = new TextView[]{
-                findViewById(R.id.chip2Min),
-                findViewById(R.id.chip5Min),
-                findViewById(R.id.chip7Min),
-                findViewById(R.id.chip15Min),
-                findViewById(R.id.chip30Min),
-                findViewById(R.id.chip60Min)
-        };
 
         flagArenaView.setArenaEventListener(this);
     }
 
-    private void setupDurationChips() {
-        for (int i = 0; i < durationChips.length; i++) {
-            final int index = i;
-            final int minutes = DURATION_OPTIONS_MINUTES[i];
-            durationChips[i].setOnClickListener(v -> selectDurationChip(index, minutes));
-        }
-        selectDurationChip(0, DURATION_OPTIONS_MINUTES[0]);
+    private void setupDurationSliderAndButtons() {
+        // SeekBar progress 0..179 maps to 1..180 minutes
+        seekBarDuration.setMax(MAX_DURATION_MINUTES - MIN_DURATION_MINUTES);
+        seekBarDuration.setProgress(selectedDurationMinutes - MIN_DURATION_MINUTES);
+
+        seekBarDuration.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int minutes = MIN_DURATION_MINUTES + progress;
+                if (fromUser) {
+                    applySelectedDuration(minutes, false);
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+
+        btnMinusDuration.setOnClickListener(v -> {
+            int newMins = Math.max(MIN_DURATION_MINUTES, selectedDurationMinutes - 1);
+            applySelectedDuration(newMins, true);
+        });
+
+        btnPlusDuration.setOnClickListener(v -> {
+            int newMins = Math.min(MAX_DURATION_MINUTES, selectedDurationMinutes + 1);
+            applySelectedDuration(newMins, true);
+        });
     }
 
-    private void selectDurationChip(int selectedIndex, int minutes) {
-        selectedDurationMinutes = minutes;
-        for (int i = 0; i < durationChips.length; i++) {
-            TextView chip = durationChips[i];
-            if (i == selectedIndex) {
-                chip.setBackgroundResource(R.drawable.bg_chip_selected);
-                chip.setTextColor(Color.WHITE);
-            } else {
-                chip.setBackgroundResource(R.drawable.bg_chip_unselected);
-                chip.setTextColor(Color.parseColor("#94A3B8"));
-            }
+    private void applySelectedDuration(int minutes, boolean syncSeekBar) {
+        selectedDurationMinutes = Math.max(MIN_DURATION_MINUTES, Math.min(MAX_DURATION_MINUTES, minutes));
+        if (syncSeekBar && seekBarDuration != null) {
+            seekBarDuration.setProgress(selectedDurationMinutes - MIN_DURATION_MINUTES);
         }
+
+        String unit = (selectedDurationMinutes == 1) ? "min" : "mins";
+        tvDurationLabel.setText(String.format(Locale.US, "Duration: %d %s", selectedDurationMinutes, unit));
 
         if (flagArenaView.getSimulationState() != FlagArenaView.SimulationState.RUNNING
                 || flagArenaView.isSimulationPaused()) {
             timerRunning = false;
             timerHandler.removeCallbacks(timerTickRunnable);
             remainingTimeMs = selectedDurationMinutes * 60L * 1000L;
-            updateTimerDisplay(remainingTimeMs, false);
+            updateTimerDisplay(remainingTimeMs, flagArenaView.isSimulationPaused());
             flagArenaView.resetToIdle(selectedDurationMinutes);
         }
     }
@@ -160,13 +183,13 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
     private void setupActions() {
         btnStartSimulation.setOnClickListener(v -> startBattleSimulation());
 
-        // Speed Button: immediately increases flag movement & collision speed
+        // Speed Button: cycles 1x, 2x, 5x, 8x
         btnSpeedMultiplier.setOnClickListener(v -> {
             speedMultiplierIndex = (speedMultiplierIndex + 1) % SPEED_MULTIPLIERS.length;
             float mult = SPEED_MULTIPLIERS[speedMultiplierIndex];
             flagArenaView.setSpeedMultiplier(mult);
             int multInt = Math.round(mult);
-            btnSpeedMultiplier.setText(String.format(Locale.US, "Speed: %dx", multInt));
+            btnSpeedMultiplier.setText(String.format(Locale.US, "%dx", multInt));
             if (multInt > 1) {
                 btnSpeedMultiplier.setBackgroundResource(R.drawable.bg_chip_selected);
                 btnSpeedMultiplier.setTextColor(Color.WHITE);
@@ -185,7 +208,6 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
         flagArenaView.setSimulationPaused(nowPaused);
 
         if (nowPaused) {
-            // Stop the timer and show bottom control panel so user can reconfigure or restart
             timerHandler.removeCallbacks(timerTickRunnable);
             updateTimerDisplay(remainingTimeMs, true);
             tvEliminatedFeed.setText("Paused");
@@ -200,7 +222,6 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
                         .start();
             }
         } else {
-            // Resume movement & countdown if battle was running
             updateTimerDisplay(remainingTimeMs, false);
             if (flagArenaView.getSimulationState() == FlagArenaView.SimulationState.RUNNING) {
                 lastTimerTickRealtimeMs = System.currentTimeMillis();
@@ -262,6 +283,8 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
         timerRunning = false;
         timerHandler.removeCallbacks(timerTickRunnable);
 
+        playVictoryChime();
+
         if (winnerBall != null) {
             Bitmap winnerAvatar = winnerBall.createHighResBitmap(160);
             ivWinnerFlag.setImageBitmap(winnerAvatar);
@@ -295,6 +318,77 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
                 .alpha(1f)
                 .setDuration(300L)
                 .start();
+    }
+
+    /**
+     * Synthesizes and plays a celebratory 4-note ascending bell chime (C5 - E5 - G5 - C6)
+     * using Android's AudioTrack when only one flag remains in the arena.
+     */
+    private void playVictoryChime() {
+        new Thread(() -> {
+            AudioTrack track = null;
+            try {
+                final int sampleRate = 44100;
+                final double totalDurationSec = 1.15;
+                final int numSamples = (int) (sampleRate * totalDurationSec);
+                short[] pcm = new short[numSamples];
+
+                final double[] freqs = new double[]{523.25, 659.25, 783.99, 1046.50};
+                final double[] starts = new double[]{0.00, 0.14, 0.28, 0.42};
+                final double[] durations = new double[]{0.45, 0.45, 0.45, 0.72};
+
+                for (int i = 0; i < numSamples; i++) {
+                    double t = (double) i / sampleRate;
+                    double sampleSum = 0.0;
+
+                    for (int n = 0; n < freqs.length; n++) {
+                        double dt = t - starts[n];
+                        if (dt >= 0.0 && dt <= durations[n]) {
+                            double attack = Math.min(1.0, dt / 0.012);
+                            double decay = Math.exp(-3.8 * dt / durations[n]);
+                            double env = attack * decay;
+                            double fundamental = Math.sin(2.0 * Math.PI * freqs[n] * dt);
+                            double overtone = 0.30 * Math.sin(2.0 * Math.PI * (freqs[n] * 2.0) * dt);
+                            sampleSum += env * (fundamental + overtone) * 0.32;
+                        }
+                    }
+
+                    double clamped = Math.max(-1.0, Math.min(1.0, sampleSum));
+                    pcm[i] = (short) (clamped * 28000);
+                }
+
+                int bufferBytes = pcm.length * 2;
+                track = new AudioTrack.Builder()
+                        .setAudioAttributes(new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_GAME)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build())
+                        .setAudioFormat(new AudioFormat.Builder()
+                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                .setSampleRate(sampleRate)
+                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                                .build())
+                        .setBufferSizeInBytes(bufferBytes)
+                        .setTransferMode(AudioTrack.MODE_STATIC)
+                        .build();
+
+                track.write(pcm, 0, pcm.length);
+                track.play();
+                Thread.sleep(1250L);
+            } catch (Exception ignored) {
+            } finally {
+                if (track != null) {
+                    try {
+                        track.stop();
+                    } catch (Exception ignored) {
+                    }
+                    try {
+                        track.release();
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        }, "VictoryChimeThread").start();
     }
 
     private void updateRemainingCounterDisplay(int remaining, int total) {
