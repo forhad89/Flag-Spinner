@@ -18,13 +18,14 @@ import java.util.Locale;
 
 /**
  * MainActivity managing user duration inputs (2, 5, 7, 15, 30, 60 mins),
- * live countdown timer, remaining flag counter, game state transitions
- * (IDLE, RUNNING, WON), and smooth control panel / victory UI visibility toggles.
+ * live countdown timer (clickable to stop/pause the simulation),
+ * speed multiplier button (boosts flag speed immediately),
+ * remaining flag counter, and UI visibility transitions.
  */
 public class MainActivity extends ComponentActivity implements FlagArenaView.ArenaEventListener {
 
     private static final int[] DURATION_OPTIONS_MINUTES = new int[]{2, 5, 7, 15, 30, 60};
-    private static final float[] SPEED_MULTIPLIERS = new float[]{1.0f, 2.0f, 5.0f, 10.0f};
+    private static final float[] SPEED_MULTIPLIERS = new float[]{1.0f, 2.0f, 4.0f, 8.0f};
 
     private FlagArenaView flagArenaView;
     private TextView tvRemainingCounter;
@@ -52,7 +53,7 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
     private final Runnable timerTickRunnable = new Runnable() {
         @Override
         public void run() {
-            if (!timerRunning) {
+            if (!timerRunning || flagArenaView.isSimulationPaused()) {
                 return;
             }
             long nowMs = System.currentTimeMillis();
@@ -64,13 +65,13 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
 
             if (remainingTimeMs <= 0L) {
                 remainingTimeMs = 0L;
-                updateTimerDisplay(0L);
+                updateTimerDisplay(0L, false);
                 timerRunning = false;
                 flagArenaView.finishByTimer();
                 return;
             }
 
-            updateTimerDisplay(remainingTimeMs);
+            updateTimerDisplay(remainingTimeMs, false);
             timerHandler.postDelayed(this, 100L);
         }
     };
@@ -94,7 +95,7 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
 
         updateRemainingCounterDisplay(FlagBall.TOTAL_COUNTRIES, FlagBall.TOTAL_COUNTRIES);
         remainingTimeMs = selectedDurationMinutes * 60L * 1000L;
-        updateTimerDisplay(remainingTimeMs);
+        updateTimerDisplay(remainingTimeMs, false);
     }
 
     private void bindViews() {
@@ -146,9 +147,12 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
             }
         }
 
-        if (flagArenaView.getSimulationState() != FlagArenaView.SimulationState.RUNNING) {
+        if (flagArenaView.getSimulationState() != FlagArenaView.SimulationState.RUNNING
+                || flagArenaView.isSimulationPaused()) {
+            timerRunning = false;
+            timerHandler.removeCallbacks(timerTickRunnable);
             remainingTimeMs = selectedDurationMinutes * 60L * 1000L;
-            updateTimerDisplay(remainingTimeMs);
+            updateTimerDisplay(remainingTimeMs, false);
             flagArenaView.resetToIdle(selectedDurationMinutes);
         }
     }
@@ -156,38 +160,77 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
     private void setupActions() {
         btnStartSimulation.setOnClickListener(v -> startBattleSimulation());
 
+        // Speed Button: immediately increases flag movement & collision speed
         btnSpeedMultiplier.setOnClickListener(v -> {
             speedMultiplierIndex = (speedMultiplierIndex + 1) % SPEED_MULTIPLIERS.length;
             float mult = SPEED_MULTIPLIERS[speedMultiplierIndex];
             flagArenaView.setSpeedMultiplier(mult);
             int multInt = Math.round(mult);
-            btnSpeedMultiplier.setText(String.format(Locale.US, "%dx", multInt));
+            btnSpeedMultiplier.setText(String.format(Locale.US, "Speed: %dx", multInt));
             if (multInt > 1) {
                 btnSpeedMultiplier.setBackgroundResource(R.drawable.bg_chip_selected);
                 btnSpeedMultiplier.setTextColor(Color.WHITE);
             } else {
                 btnSpeedMultiplier.setBackgroundResource(R.drawable.bg_chip_unselected);
-                btnSpeedMultiplier.setTextColor(Color.parseColor("#94A3B8"));
+                btnSpeedMultiplier.setTextColor(Color.WHITE);
             }
         });
+
+        // Clicking on the Timer stops/pauses the simulation and brings back controls
+        tvTimerCountdown.setOnClickListener(v -> toggleTimerStopState());
+    }
+
+    private void toggleTimerStopState() {
+        boolean nowPaused = !flagArenaView.isSimulationPaused();
+        flagArenaView.setSimulationPaused(nowPaused);
+
+        if (nowPaused) {
+            // Stop the timer and show bottom control panel so user can reconfigure or restart
+            timerHandler.removeCallbacks(timerTickRunnable);
+            updateTimerDisplay(remainingTimeMs, true);
+            tvEliminatedFeed.setText("Paused");
+
+            if (bottomControlPanel.getVisibility() != View.VISIBLE) {
+                bottomControlPanel.animate().cancel();
+                bottomControlPanel.setAlpha(0f);
+                bottomControlPanel.setVisibility(View.VISIBLE);
+                bottomControlPanel.animate()
+                        .alpha(1f)
+                        .setDuration(220L)
+                        .start();
+            }
+        } else {
+            // Resume movement & countdown if battle was running
+            updateTimerDisplay(remainingTimeMs, false);
+            if (flagArenaView.getSimulationState() == FlagArenaView.SimulationState.RUNNING) {
+                lastTimerTickRealtimeMs = System.currentTimeMillis();
+                timerRunning = true;
+                timerHandler.removeCallbacks(timerTickRunnable);
+                timerHandler.postDelayed(timerTickRunnable, 100L);
+                tvEliminatedFeed.setText("Battle Resumed!");
+
+                bottomControlPanel.animate().cancel();
+                bottomControlPanel.animate()
+                        .alpha(0f)
+                        .setDuration(220L)
+                        .withEndAction(() -> bottomControlPanel.setVisibility(View.GONE))
+                        .start();
+            } else {
+                tvEliminatedFeed.setText(R.string.eliminated_feed_placeholder);
+            }
+        }
     }
 
     private void startBattleSimulation() {
-        // Hide Victory overlay if visible
         victoryOverlayCard.animate().cancel();
         victoryOverlayCard.setVisibility(View.GONE);
 
-        // Reset counters & timer
+        flagArenaView.setSimulationPaused(false);
         updateRemainingCounterDisplay(FlagBall.TOTAL_COUNTRIES, FlagBall.TOTAL_COUNTRIES);
         remainingTimeMs = selectedDurationMinutes * 60L * 1000L;
-        updateTimerDisplay(remainingTimeMs);
-        tvEliminatedFeed.setText(String.format(
-                Locale.US,
-                "Battle running (%d mins) - Exit gap rotating 35°",
-                selectedDurationMinutes
-        ));
+        updateTimerDisplay(remainingTimeMs, false);
+        tvEliminatedFeed.setText("Battle Started!");
 
-        // Fade out and hide the bottom control panel completely
         bottomControlPanel.animate().cancel();
         bottomControlPanel.animate()
                 .alpha(0f)
@@ -195,7 +238,6 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
                 .withEndAction(() -> bottomControlPanel.setVisibility(View.GONE))
                 .start();
 
-        // Start 60 FPS arena simulation and countdown timer
         flagArenaView.startSimulation(selectedDurationMinutes);
         lastTimerTickRealtimeMs = System.currentTimeMillis();
         timerRunning = true;
@@ -235,7 +277,6 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
             ));
         }
 
-        // Show Victory Celebration Card prominently in center
         victoryOverlayCard.setAlpha(0f);
         victoryOverlayCard.setScaleX(0.88f);
         victoryOverlayCard.setScaleY(0.88f);
@@ -247,7 +288,6 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
                 .setDuration(300L)
                 .start();
 
-        // Bring back the Bottom Control Panel so the user can configure time and restart
         bottomControlPanel.animate().cancel();
         bottomControlPanel.setAlpha(0f);
         bottomControlPanel.setVisibility(View.VISIBLE);
@@ -261,11 +301,12 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
         tvRemainingCounter.setText(getString(R.string.remaining_counter_format, remaining, total));
     }
 
-    private void updateTimerDisplay(long timeMs) {
+    private void updateTimerDisplay(long timeMs, boolean stopped) {
         long totalSeconds = Math.max(0L, (timeMs + 999L) / 1000L);
         long minutes = totalSeconds / 60L;
         long seconds = totalSeconds % 60L;
-        tvTimerCountdown.setText(String.format(Locale.US, "%02d:%02d", minutes, seconds));
+        String prefix = stopped ? "⏹ " : "⏱ ";
+        tvTimerCountdown.setText(String.format(Locale.US, "%s%02d:%02d", prefix, minutes, seconds));
     }
 
     @Override
@@ -274,7 +315,7 @@ public class MainActivity extends ComponentActivity implements FlagArenaView.Are
         if (flagArenaView != null) {
             flagArenaView.resumeSimulationThread();
         }
-        if (timerRunning) {
+        if (timerRunning && (flagArenaView == null || !flagArenaView.isSimulationPaused())) {
             lastTimerTickRealtimeMs = System.currentTimeMillis();
             timerHandler.removeCallbacks(timerTickRunnable);
             timerHandler.postDelayed(timerTickRunnable, 100L);

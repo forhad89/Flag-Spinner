@@ -21,9 +21,11 @@ import java.util.Random;
 
 /**
  * Custom 60 FPS Arena View for "Last Flag in the Circle Wins".
- * Uses Choreographer hardware-synced 60 FPS frame callbacks so the rotating
- * circular ring, shrinking arena, and 195 colliding/shrinking flag balls
- * animate continuously without any SurfaceView layer occlusion.
+ * Features:
+ * - Gentle, smooth 360-degree rotation of the circular ring and 35-degree exit gap.
+ * - Flags inside the circle collide with each other and the wall with elastic shrink/bounce physics.
+ * - As soon as a flag exits through the circle gap, it disappears immediately (no longer shown).
+ * - Once all other flags exit the circle, the final remaining flag is crowned the Winner.
  */
 public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback, Choreographer.FrameCallback {
 
@@ -79,11 +81,14 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
     private float gapAngle = 290f;
     private float outerTrackRotationDeg = 0f;
     private float gapSweep = GAP_SWEEP_DEGREES;
-    private float gapRotationSpeedDegPerSec = 78f;
+    // Gentle rotation speed ("circle ta halka halka gurbe")
+    private float gapRotationSpeedDegPerSec = 24f;
 
-    private float targetBallSpeed = 290f;
-    private float gravityAccel = 260f;
+    private float baseBallSpeed = 270f;
+    private float gravityAccel = 240f;
     private float speedMultiplier = 1.0f;
+    private boolean simulationPaused = false;
+
     private long selectedDurationMs = 2 * 60 * 1000L;
     private long elapsedSimulationMs = 0L;
     private long lastExitTimestampMs = 0L;
@@ -132,7 +137,6 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
         arenaRingPaint.setStrokeCap(Paint.Cap.ROUND);
         arenaRingPaint.setShadowLayer(8f * density, 0f, 0f, Color.argb(160, 59, 130, 246));
 
-        // Rotating accent segments along the white circle so the circular rotation is unmistakably visible
         arenaSegmentAccentPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         arenaSegmentAccentPaint.setColor(Color.parseColor("#38BDF8"));
         arenaSegmentAccentPaint.setStyle(Paint.Style.STROKE);
@@ -140,7 +144,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
         arenaSegmentAccentPaint.setStrokeCap(Paint.Cap.ROUND);
 
         arenaOuterTrackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        arenaOuterTrackPaint.setColor(Color.argb(85, 148, 163, 184));
+        arenaOuterTrackPaint.setColor(Color.argb(80, 148, 163, 184));
         arenaOuterTrackPaint.setStyle(Paint.Style.STROKE);
         arenaOuterTrackPaint.setStrokeWidth(2.0f * density);
         arenaOuterTrackPaint.setPathEffect(new DashPathEffect(new float[]{12f * density, 10f * density}, 0f));
@@ -166,15 +170,43 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
         this.eventListener = listener;
     }
 
+    /**
+     * Increases or sets the flag speed multiplier immediately so all flags move faster when tapped.
+     */
     public void setSpeedMultiplier(float multiplier) {
         synchronized (stateLock) {
-            this.speedMultiplier = Math.max(1.0f, Math.min(20.0f, multiplier));
+            float clamped = Math.max(1.0f, Math.min(20.0f, multiplier));
+            float ratio = clamped / Math.max(0.1f, this.speedMultiplier);
+            this.speedMultiplier = clamped;
+
+            for (int i = 0; i < balls.size(); i++) {
+                FlagBall b = balls.get(i);
+                if (!b.isEscaped()) {
+                    b.vx *= ratio;
+                    b.vy *= ratio;
+                    b.triggerCollisionShrink(0.55f, 140f);
+                }
+            }
         }
+        invalidate();
     }
 
     public float getSpeedMultiplier() {
         synchronized (stateLock) {
             return speedMultiplier;
+        }
+    }
+
+    public void setSimulationPaused(boolean paused) {
+        synchronized (stateLock) {
+            this.simulationPaused = paused;
+        }
+        invalidate();
+    }
+
+    public boolean isSimulationPaused() {
+        synchronized (stateLock) {
+            return simulationPaused;
         }
     }
 
@@ -201,38 +233,39 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
         this.gapSweep = GAP_SWEEP_DEGREES;
 
         float refRadius = Math.max(240f, maxArenaRadius);
-        gravityAccel = refRadius * 0.72f;
+        gravityAccel = refRadius * 0.68f;
         switch (durationMinutes) {
             case 2:
-                targetBallSpeed = refRadius * 1.12f;
-                gapRotationSpeedDegPerSec = 82f;
+                baseBallSpeed = refRadius * 1.05f;
+                gapRotationSpeedDegPerSec = 26f;
                 break;
             case 5:
-                targetBallSpeed = refRadius * 0.98f;
-                gapRotationSpeedDegPerSec = 72f;
+                baseBallSpeed = refRadius * 0.94f;
+                gapRotationSpeedDegPerSec = 23f;
                 break;
             case 7:
-                targetBallSpeed = refRadius * 0.92f;
-                gapRotationSpeedDegPerSec = 66f;
+                baseBallSpeed = refRadius * 0.88f;
+                gapRotationSpeedDegPerSec = 21f;
                 break;
             case 15:
-                targetBallSpeed = refRadius * 0.84f;
-                gapRotationSpeedDegPerSec = 58f;
+                baseBallSpeed = refRadius * 0.80f;
+                gapRotationSpeedDegPerSec = 19f;
                 break;
             case 30:
-                targetBallSpeed = refRadius * 0.76f;
-                gapRotationSpeedDegPerSec = 52f;
+                baseBallSpeed = refRadius * 0.74f;
+                gapRotationSpeedDegPerSec = 17f;
                 break;
             case 60:
             default:
-                targetBallSpeed = refRadius * 0.70f;
-                gapRotationSpeedDegPerSec = 46f;
+                baseBallSpeed = refRadius * 0.68f;
+                gapRotationSpeedDegPerSec = 15f;
                 break;
         }
     }
 
     public void startSimulation(int durationMinutes) {
         synchronized (stateLock) {
+            simulationPaused = false;
             arenaRadius = maxArenaRadius;
             updateRingRectsLocked();
             configurePacingForDuration(durationMinutes);
@@ -249,6 +282,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
 
     public void resetToIdle(int durationMinutes) {
         synchronized (stateLock) {
+            simulationPaused = false;
             arenaRadius = maxArenaRadius;
             updateRingRectsLocked();
             configurePacingForDuration(durationMinutes);
@@ -269,6 +303,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
             if (simulationState != SimulationState.RUNNING) {
                 return;
             }
+            simulationPaused = false;
             float bestDistSq = Float.MAX_VALUE;
             for (int i = 0; i < balls.size(); i++) {
                 FlagBall b = balls.get(i);
@@ -285,6 +320,15 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
             if (crowned == null && !balls.isEmpty()) {
                 crowned = balls.get(0);
             }
+            // Hide any other remaining flags so only the winner is shown
+            for (int i = 0; i < balls.size(); i++) {
+                FlagBall b = balls.get(i);
+                if (b != crowned) {
+                    b.setEscaped(true, elapsedSimulationMs);
+                    b.setActiveInVoid(false);
+                }
+            }
+            remainingCount = 1;
             winnerBall = crowned;
             simulationState = SimulationState.WON;
             if (crowned != null) {
@@ -293,7 +337,10 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
         }
         if (crowned != null && eventListener != null) {
             final FlagBall finalWinner = crowned;
-            mainHandler.post(() -> eventListener.onSimulationWon(finalWinner, false));
+            mainHandler.post(() -> {
+                eventListener.onFlagEliminated(null, 1, FlagBall.TOTAL_COUNTRIES);
+                eventListener.onSimulationWon(finalWinner, false);
+            });
         }
         invalidate();
     }
@@ -314,7 +361,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                 arenaCenterY,
                 arenaRadius,
                 ballRadius,
-                targetBallSpeed,
+                baseBallSpeed * speedMultiplier,
                 random
         ));
         remainingCount = balls.size();
@@ -338,9 +385,9 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
             return;
         }
         arenaCenterX = width * 0.5f;
-        arenaCenterY = height * 0.47f;
+        arenaCenterY = height * 0.50f;
         float minDim = Math.min(width, height);
-        maxArenaRadius = minDim * 0.42f;
+        maxArenaRadius = minDim * 0.41f;
         if (arenaRadius <= 0f) {
             arenaRadius = maxArenaRadius;
         }
@@ -416,7 +463,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
-        // Keep Choreographer loop managed by window/lifecycle
+        // Managed by window lifecycle
     }
 
     public void resumeSimulationThread() {
@@ -447,51 +494,48 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
         }
         float dtSeconds = (frameTimeNanos - lastFrameTimeNs) / 1_000_000_000f;
         lastFrameTimeNs = frameTimeNanos;
-        if (dtSeconds <= 0f || dtSeconds > 0.08f) {
+        if (dtSeconds <= 0f || dtSeconds > 0.06f) {
             dtSeconds = 0.0166f;
         }
 
         synchronized (stateLock) {
-            stepPhysicsLocked(dtSeconds);
+            if (!simulationPaused) {
+                stepPhysicsLocked(dtSeconds);
+            }
         }
 
-        // Trigger hardware-accelerated onDraw(Canvas) every frame at 60 FPS
         invalidate();
         Choreographer.getInstance().postFrameCallback(this);
     }
 
-    /**
-     * Advances the 2D physics simulation, continuous circle rotation, arena shrinking,
-     * and ball-to-ball collision shrink/bounce impulses.
-     */
     private void stepPhysicsLocked(float dtSeconds) {
         if (maxArenaRadius <= 0f || balls.isEmpty()) {
             return;
         }
 
-        float effectiveDt = dtSeconds * speedMultiplier;
-
-        // 1. Rotate the circular ring and outer orbit track continuously
-        gapAngle = (gapAngle + gapRotationSpeedDegPerSec * effectiveDt) % 360f;
+        // 1. Gentle continuous rotation of the circle ("circle ta halka halka gurbe")
+        float circleRotDt = dtSeconds * (1.0f + (speedMultiplier - 1.0f) * 0.25f);
+        gapAngle = (gapAngle + gapRotationSpeedDegPerSec * circleRotDt) % 360f;
         if (gapAngle < 0f) {
             gapAngle += 360f;
         }
-        outerTrackRotationDeg = (outerTrackRotationDeg - gapRotationSpeedDegPerSec * 0.65f * effectiveDt) % 360f;
+        outerTrackRotationDeg = (outerTrackRotationDeg - gapRotationSpeedDegPerSec * 0.6f * circleRotDt) % 360f;
 
-        // 2. Gradually shrink the circular arena during RUNNING battle as flags get eliminated
+        // 2. Gradually shrink the circular arena during RUNNING battle as flags exit
+        float flagEffectiveDt = dtSeconds * speedMultiplier;
         if (simulationState == SimulationState.RUNNING) {
-            elapsedSimulationMs += (long) (effectiveDt * 1000f);
+            elapsedSimulationMs += (long) (flagEffectiveDt * 1000f);
             float eliminatedFraction = 1.0f - ((float) remainingCount / (float) FlagBall.TOTAL_COUNTRIES);
-            float shrinkFactor = 1.0f - (0.36f * eliminatedFraction); // Shrinks down to 64% radius
-            float desiredArenaRadius = maxArenaRadius * Math.max(0.64f, shrinkFactor);
-            arenaRadius += (desiredArenaRadius - arenaRadius) * Math.min(1.0f, effectiveDt * 3.5f);
+            float shrinkFactor = 1.0f - (0.35f * eliminatedFraction);
+            float desiredArenaRadius = maxArenaRadius * Math.max(0.65f, shrinkFactor);
+            arenaRadius += (desiredArenaRadius - arenaRadius) * Math.min(1.0f, dtSeconds * 3.0f);
             updateRingRectsLocked();
         } else {
-            arenaRadius += (maxArenaRadius - arenaRadius) * Math.min(1.0f, effectiveDt * 5.0f);
+            arenaRadius += (maxArenaRadius - arenaRadius) * Math.min(1.0f, dtSeconds * 5.0f);
             updateRingRectsLocked();
         }
 
-        // 3. Calculate pacing target so 194 flags exit steadily across selectedDurationMs
+        // 3. Pacing target for flag exits
         float progress = Math.min(1.0f, (float) elapsedSimulationMs / (float) Math.max(1L, selectedDurationMs));
         int expectedRemaining = Math.max(1, Math.round(FlagBall.TOTAL_COUNTRIES - (FlagBall.TOTAL_COUNTRIES - 1) * progress));
         long minIntervalBetweenExitsMs = Math.max(70L, selectedDurationMs / (FlagBall.TOTAL_COUNTRIES * 2L));
@@ -511,7 +555,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                 if (!b.isEscaped()) {
                     float dxCenter = b.x - arenaCenterX;
                     float dyCenter = b.y - arenaCenterY;
-                    if (dxCenter * dxCenter + dyCenter * dyCenter > (arenaRadius * 0.50f) * (arenaRadius * 0.50f)) {
+                    if (dxCenter * dxCenter + dyCenter * dyCenter > (arenaRadius * 0.48f) * (arenaRadius * 0.48f)) {
                         float dxGap = b.x - gapTargetX;
                         float dyGap = b.y - gapTargetY;
                         float dSq = dxGap * dxGap + dyGap * dyGap;
@@ -524,14 +568,10 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
             }
         }
 
-        // Keep balls actively moving & colliding both in IDLE preview and in RUNNING battle
-        float simSpeedFactor = (simulationState == SimulationState.IDLE) ? 0.78f : 1.0f;
-        float stepDt = Math.min(0.032f, dtSeconds * speedMultiplier * simSpeedFactor);
+        float currentTargetSpeed = baseBallSpeed * (0.9f + 0.55f * speedMultiplier);
+        float stepDt = Math.min(0.028f, dtSeconds * (0.85f + 0.45f * speedMultiplier));
 
-        int viewW = Math.max(1080, getWidth());
-        int viewH = Math.max(1920, getHeight());
-
-        // 4. Update positions, gravity, shrink animation, and circular wall / exit gap collisions
+        // 4. Update active flags (inside the circle + briefly shooting out of the gap before vanishing)
         for (int i = 0; i < balls.size(); i++) {
             FlagBall b = balls.get(i);
             if (!b.isActiveInVoid()) {
@@ -540,8 +580,25 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
 
             b.updateVisualAnimation(dtSeconds);
 
-            if (!b.isEscaped() && simulationState != SimulationState.WON) {
-                // Downward gravity + slight rotational swirl so flags constantly tumble and collide
+            if (b.isEscaped()) {
+                // Flag is visibly exiting the circle gap -> move outward, shrink & fade out, then vanish!
+                b.x += b.vx * dtSeconds;
+                b.y += b.vy * dtSeconds;
+                b.escapeAlpha -= dtSeconds * 2.4f;
+                b.impactScale = Math.max(0.25f, b.impactScale - dtSeconds * 1.6f);
+
+                float dxOut = b.x - arenaCenterX;
+                float dyOut = b.y - arenaCenterY;
+                float distOut = (float) Math.hypot(dxOut, dyOut);
+
+                if (b.escapeAlpha <= 0.02f || distOut > arenaRadius + b.radius * 4.5f) {
+                    b.escapeAlpha = 0f;
+                    b.setActiveInVoid(false);
+                }
+                continue;
+            }
+
+            if (simulationState != SimulationState.WON) {
                 b.vy += gravityAccel * stepDt;
             }
 
@@ -550,22 +607,14 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                 float toGapY = gapTargetY - b.y;
                 float len = (float) Math.hypot(toGapX, toGapY);
                 if (len > 1f) {
-                    float pull = targetBallSpeed * 1.18f;
-                    b.vx = b.vx * 0.85f + (toGapX / len) * pull * 0.15f;
-                    b.vy = b.vy * 0.85f + (toGapY / len) * pull * 0.15f;
+                    float pull = currentTargetSpeed * 1.18f;
+                    b.vx = b.vx * 0.84f + (toGapX / len) * pull * 0.16f;
+                    b.vy = b.vy * 0.84f + (toGapY / len) * pull * 0.16f;
                 }
             }
 
             b.x += b.vx * stepDt;
             b.y += b.vy * stepDt;
-
-            if (b.isEscaped()) {
-                if (b.x < -b.radius * 4f || b.x > viewW + b.radius * 4f
-                        || b.y < -b.radius * 4f || b.y > viewH + b.radius * 4f) {
-                    b.setActiveInVoid(false);
-                }
-                continue;
-            }
 
             if (simulationState == SimulationState.WON && b == winnerBall) {
                 b.x += (arenaCenterX - b.x) * 0.08f;
@@ -600,15 +649,18 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                         || (remainingCount > expectedRemaining + 2);
 
                 if (insideGap && allowExitNow && timeReady && remainingCount > 1) {
-                    // Ball escapes through the rotating 35-degree exit gap!
+                    // Flag shoots out visibly through the circle gap, then fades and vanishes right outside!
                     b.setEscaped(true, elapsedSimulationMs);
+                    b.setActiveInVoid(true);
+                    b.escapeAlpha = 1.0f;
+                    b.impactScale = 1.0f;
+
+                    float exitSpeed = Math.max(240f, baseBallSpeed * 0.95f);
+                    b.vx = nx * exitSpeed;
+                    b.vy = ny * exitSpeed;
+
                     lastExitTimestampMs = elapsedSimulationMs;
                     remainingCount--;
-
-                    float escapeSpeed = Math.max(targetBallSpeed * 1.75f, 420f);
-                    b.vx = nx * escapeSpeed;
-                    b.vy = ny * escapeSpeed;
-                    b.triggerCollisionShrink(1.0f, 240f);
 
                     spawnEscapeSparksLocked(b.x, b.y, b.getPrimaryColor(), b.getSecondaryColor());
 
@@ -618,6 +670,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                         mainHandler.post(() -> eventListener.onFlagEliminated(eliminated, remNow, FlagBall.TOTAL_COUNTRIES));
                     }
 
+                    // When all other 194 flags have exited, show the Winner!
                     if (remainingCount == 1) {
                         FlagBall lastSurvivor = findLastSurvivorLocked();
                         winnerBall = lastSurvivor;
@@ -634,7 +687,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                         allowExitNow = false;
                     }
                 } else {
-                    // Solid rotating white wall collision: bounce inward + tangential centrifuge kick + shrink pulse
+                    // Solid white circular wall collision: bounce inward + shrink pulse
                     b.x = arenaCenterX + nx * boundaryDist;
                     b.y = arenaCenterY + ny * boundaryDist;
 
@@ -644,34 +697,31 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                         b.vy -= 2.0f * vn * ny;
                     }
 
-                    // Tangential kick from the spinning circular wall
                     float tx = -ny;
                     float ty = nx;
-                    float wallSpinKick = targetBallSpeed * 0.22f;
+                    float wallSpinKick = currentTargetSpeed * 0.14f;
                     b.vx += tx * wallSpinKick;
                     b.vy += ty * wallSpinKick;
 
-                    // Slight random angular impulse so balls bounce chaotically across the circle
-                    float randomJitterAngle = (random.nextFloat() - 0.5f) * 0.42f;
+                    float randomJitterAngle = (random.nextFloat() - 0.5f) * 0.40f;
                     float cosA = (float) Math.cos(randomJitterAngle);
                     float sinA = (float) Math.sin(randomJitterAngle);
                     float rx = b.vx * cosA - b.vy * sinA;
                     float ry = b.vx * sinA + b.vy * cosA;
 
                     float speed = (float) Math.hypot(rx, ry);
-                    float desiredSpeed = targetBallSpeed * (0.94f + random.nextFloat() * 0.26f);
+                    float desiredSpeed = currentTargetSpeed * (0.94f + random.nextFloat() * 0.24f);
                     if (speed > 0.001f) {
                         b.vx = (rx / speed) * desiredSpeed;
                         b.vy = (ry / speed) * desiredSpeed;
                     }
 
-                    // Trigger visible elastic shrink on wall impact
                     b.triggerCollisionShrink(0.85f, (random.nextFloat() - 0.5f) * 260f);
                 }
             }
         }
 
-        // 5. Ball-to-ball elastic collisions with shrink/squash impact and 2-pass anti-clipping
+        // 5. Ball-to-ball elastic collisions among remaining flags inside the circle
         int n = balls.size();
         for (int pass = 0; pass < 2; pass++) {
             for (int i = 0; i < n; i++) {
@@ -704,7 +754,6 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                             dist = minDist * 0.5f;
                         }
 
-                        // Separate overlapping balls
                         float overlap = (minDist - dist) * 0.53f;
                         a.x -= nx * overlap;
                         a.y -= ny * overlap;
@@ -720,19 +769,17 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
                             float velAlongNormal = rvx * nx + rvy * ny;
 
                             if (velAlongNormal < 0f) {
-                                // Lively elastic bounce (restitution 1.05f)
-                                float impulse = -1.05f * velAlongNormal;
+                                float impulse = -1.04f * velAlongNormal;
                                 a.vx -= impulse * nx;
                                 a.vy -= impulse * ny;
                                 b.vx += impulse * nx;
                                 b.vy += impulse * ny;
 
-                                regulateBallSpeed(a);
-                                regulateBallSpeed(b);
+                                regulateBallSpeed(a, currentTargetSpeed);
+                                regulateBallSpeed(b, currentTargetSpeed);
 
-                                // Trigger visible collision shrink/squash on both colliding flags
-                                float impactStrength = Math.min(1.0f, Math.abs(velAlongNormal) / (targetBallSpeed * 0.8f));
-                                if (impactStrength > 0.15f) {
+                                float impactStrength = Math.min(1.0f, Math.abs(velAlongNormal) / (currentTargetSpeed * 0.8f));
+                                if (impactStrength > 0.14f) {
                                     float spin = (random.nextFloat() - 0.5f) * 220f;
                                     a.triggerCollisionShrink(impactStrength, spin);
                                     b.triggerCollisionShrink(impactStrength, -spin);
@@ -768,14 +815,14 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
         }
     }
 
-    private void regulateBallSpeed(FlagBall b) {
+    private void regulateBallSpeed(FlagBall b, float refSpeed) {
         float speed = (float) Math.hypot(b.vx, b.vy);
-        float minSpeed = targetBallSpeed * 0.76f;
-        float maxSpeed = targetBallSpeed * 1.42f;
+        float minSpeed = refSpeed * 0.75f;
+        float maxSpeed = refSpeed * 1.42f;
         if (speed < 0.001f) {
             double ang = random.nextDouble() * Math.PI * 2.0;
-            b.vx = (float) Math.cos(ang) * targetBallSpeed;
-            b.vy = (float) Math.sin(ang) * targetBallSpeed;
+            b.vx = (float) Math.cos(ang) * refSpeed;
+            b.vy = (float) Math.sin(ang) * refSpeed;
         } else if (speed < minSpeed) {
             b.vx = (b.vx / speed) * minSpeed;
             b.vy = (b.vy / speed) * minSpeed;
@@ -866,7 +913,7 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
         float solidSweepAngle = 360f - gapSweep;
         canvas.drawArc(arenaArcRect, solidStartAngle, solidSweepAngle, false, arenaRingPaint);
 
-        // 4. Rotating Cyan Accent Segments along the White Ring so rotation is vividly visible
+        // 4. Rotating Cyan Accent Segments along the White Ring
         int segmentCount = 8;
         float usableSweep = solidSweepAngle - 16f;
         float stepAngle = usableSweep / segmentCount;
@@ -895,13 +942,12 @@ public class FlagArenaView extends SurfaceView implements SurfaceHolder.Callback
             canvas.drawCircle(sp.x, sp.y, sp.radius, sparkPaint);
         }
 
-        // 7. Render All Active Flag Balls (with collision shrink/squash & spin)
+        // 7. Render active flags (inside the circle + flags visibly exiting the gap before vanishing)
         for (int i = 0; i < balls.size(); i++) {
             FlagBall b = balls.get(i);
-            if (!b.isActiveInVoid()) {
-                continue;
+            if (b.isActiveInVoid()) {
+                b.draw(canvas);
             }
-            b.draw(canvas);
         }
 
         // 8. Highlight Winner Flag inside the circle when WON

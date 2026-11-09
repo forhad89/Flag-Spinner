@@ -15,7 +15,7 @@
     <string name="winner_format">%1$s Wins!</string>
     <string name="winner_subtitle_last_standing">Last Flag Standing in the Circle!</string>
     <string name="winner_subtitle_time_up">Final Survivor Leaderboard Champion!</string>
-    <string name="eliminated_feed_placeholder">Tap Start Simulation to release 195 flags</string>
+    <string name="eliminated_feed_placeholder">Ready to Battle</string>
     <string name="eliminated_feed_format">Out: %1$s (%2$s)</string>
     <string name="trophy_desc">Championship Trophy</string>
 </resources>

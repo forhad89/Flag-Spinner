@@ -64,10 +64,11 @@ public class FlagBall {
     public float radius;
     public final float baseRadius;
 
-    // Visual shrink/squash & rotation state on collision
+    // Visual shrink/squash, rotation, and exit fade-out state
     public float impactScale = 1.0f;
     public float rotationDeg = 0f;
     public float angularVelDegPerSec = 0f;
+    public float escapeAlpha = 1.0f;
 
     private boolean escaped = false;
     private boolean activeInVoid = true;
@@ -77,6 +78,7 @@ public class FlagBall {
     private int cachedRadiusPx = -1;
 
     private static final Paint BITMAP_PAINT = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Paint alphaBitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
 
     public FlagBall(
             String countryCode,
@@ -158,7 +160,7 @@ public class FlagBall {
      * Updates the smooth spring recovery of the shrink scale and ball rotation each frame.
      */
     public void updateVisualAnimation(float dtSeconds) {
-        if (impactScale < 1.0f) {
+        if (!escaped && impactScale < 1.0f) {
             impactScale += (1.0f - impactScale) * Math.min(1.0f, dtSeconds * 14.0f);
             if (impactScale > 0.995f) {
                 impactScale = 1.0f;
@@ -325,8 +327,16 @@ public class FlagBall {
     }
 
     public void draw(Canvas canvas) {
+        if (escapeAlpha <= 0.01f) {
+            return;
+        }
         ensureAvatarBitmap();
         if (cachedAvatar != null) {
+            Paint paintToUse = BITMAP_PAINT;
+            if (escapeAlpha < 0.99f) {
+                alphaBitmapPaint.setAlpha(Math.max(0, Math.min(255, Math.round(escapeAlpha * 255f))));
+                paintToUse = alphaBitmapPaint;
+            }
             if (Math.abs(impactScale - 1.0f) > 0.01f || Math.abs(rotationDeg) > 0.5f) {
                 canvas.save();
                 canvas.translate(x, y);
@@ -336,7 +346,7 @@ public class FlagBall {
                         cachedAvatar,
                         -cachedAvatar.getWidth() * 0.5f,
                         -cachedAvatar.getHeight() * 0.5f,
-                        BITMAP_PAINT
+                        paintToUse
                 );
                 canvas.restore();
             } else {
@@ -344,7 +354,7 @@ public class FlagBall {
                         cachedAvatar,
                         x - cachedAvatar.getWidth() * 0.5f,
                         y - cachedAvatar.getHeight() * 0.5f,
-                        BITMAP_PAINT
+                        paintToUse
                 );
             }
         }
