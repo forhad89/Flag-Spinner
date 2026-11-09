@@ -14,8 +14,8 @@ import java.util.Random;
 
 /**
  * Represents a single Country Flag physics ball inside the circular battle arena.
- * Renders procedural circular flag avatars with authentic color stripes/patterns
- * and 2-letter ISO country codes so all 195 countries run with zero external assets.
+ * Supports elastic collision shrink/squash animation, rotational spin, and
+ * procedural circular flag avatars for all 195 countries.
  */
 public class FlagBall {
 
@@ -62,6 +62,12 @@ public class FlagBall {
     public float vx;
     public float vy;
     public float radius;
+    public final float baseRadius;
+
+    // Visual shrink/squash & rotation state on collision
+    public float impactScale = 1.0f;
+    public float rotationDeg = 0f;
+    public float angularVelDegPerSec = 0f;
 
     private boolean escaped = false;
     private boolean activeInVoid = true;
@@ -96,6 +102,7 @@ public class FlagBall {
         this.vx = vx;
         this.vy = vy;
         this.radius = radius;
+        this.baseRadius = radius;
         ensureAvatarBitmap();
     }
 
@@ -134,6 +141,31 @@ public class FlagBall {
 
     public void setActiveInVoid(boolean activeInVoid) {
         this.activeInVoid = activeInVoid;
+    }
+
+    /**
+     * Triggers a visible shrink/compress effect when this flag collides with another flag or wall.
+     */
+    public void triggerCollisionShrink(float intensity, float spinImpulse) {
+        float targetShrink = Math.max(0.72f, 1.0f - 0.24f * Math.min(1.0f, intensity));
+        if (targetShrink < this.impactScale) {
+            this.impactScale = targetShrink;
+        }
+        this.angularVelDegPerSec = Math.max(-360f, Math.min(360f, this.angularVelDegPerSec + spinImpulse));
+    }
+
+    /**
+     * Updates the smooth spring recovery of the shrink scale and ball rotation each frame.
+     */
+    public void updateVisualAnimation(float dtSeconds) {
+        if (impactScale < 1.0f) {
+            impactScale += (1.0f - impactScale) * Math.min(1.0f, dtSeconds * 14.0f);
+            if (impactScale > 0.995f) {
+                impactScale = 1.0f;
+            }
+        }
+        rotationDeg = (rotationDeg + angularVelDegPerSec * dtSeconds) % 360f;
+        angularVelDegPerSec *= Math.max(0.85f, 1.0f - dtSeconds * 2.5f);
     }
 
     public void setRadius(float newRadius) {
@@ -266,7 +298,7 @@ public class FlagBall {
 
         // Subtle dark pill behind the ISO code for high legibility on any flag color
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(155, 15, 23, 42));
+        paint.setColor(Color.argb(165, 15, 23, 42));
         float pillW = r * 1.28f;
         float pillH = r * 0.76f;
         RectF pillRect = new RectF(cx - pillW * 0.5f, cy - pillH * 0.5f, cx + pillW * 0.5f, cy + pillH * 0.5f);
@@ -286,7 +318,7 @@ public class FlagBall {
         // Outer metallic/white rim around the circular flag ball
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(Math.max(1.5f, size * 0.045f));
-        paint.setColor(Color.argb(235, 255, 255, 255));
+        paint.setColor(Color.argb(240, 255, 255, 255));
         c.drawCircle(cx, cy, r, paint);
 
         return bmp;
@@ -295,12 +327,30 @@ public class FlagBall {
     public void draw(Canvas canvas) {
         ensureAvatarBitmap();
         if (cachedAvatar != null) {
-            canvas.drawBitmap(cachedAvatar, x - cachedAvatar.getWidth() * 0.5f, y - cachedAvatar.getHeight() * 0.5f, BITMAP_PAINT);
+            if (Math.abs(impactScale - 1.0f) > 0.01f || Math.abs(rotationDeg) > 0.5f) {
+                canvas.save();
+                canvas.translate(x, y);
+                canvas.scale(impactScale, impactScale);
+                canvas.rotate(rotationDeg * 0.25f);
+                canvas.drawBitmap(
+                        cachedAvatar,
+                        -cachedAvatar.getWidth() * 0.5f,
+                        -cachedAvatar.getHeight() * 0.5f,
+                        BITMAP_PAINT
+                );
+                canvas.restore();
+            } else {
+                canvas.drawBitmap(
+                        cachedAvatar,
+                        x - cachedAvatar.getWidth() * 0.5f,
+                        y - cachedAvatar.getHeight() * 0.5f,
+                        BITMAP_PAINT
+                );
+            }
         }
     }
 
     private static final CountrySpec[] ALL_195_SPECS = new CountrySpec[]{
-            // Featured & Popular Nations
             new CountrySpec("BD", "Bangladesh", "#006A4E", "#F42A41", "#006A4E", PatternType.CENTER_CIRCLE),
             new CountrySpec("US", "United States", "#B22234", "#FFFFFF", "#3C3B6E", PatternType.CANTON),
             new CountrySpec("AR", "Argentina", "#74ACDF", "#FFFFFF", "#74ACDF", PatternType.HORIZONTAL_3),
@@ -498,9 +548,6 @@ public class FlagBall {
             new CountrySpec("NR", "Nauru", "#002B7F", "#FFC61E", "#002B7F", PatternType.HORIZONTAL_3)
     };
 
-    /**
-     * Generates all 195 country flag balls arranged in concentric rings inside the circular arena.
-     */
     public static List<FlagBall> createAll195Countries(
             float arenaCenterX,
             float arenaCenterY,
@@ -511,7 +558,6 @@ public class FlagBall {
     ) {
         List<FlagBall> balls = new ArrayList<>(TOTAL_COUNTRIES);
 
-        // Shuffle order slightly so different countries occupy inner vs outer rings each simulation
         List<CountrySpec> specs = new ArrayList<>(TOTAL_COUNTRIES);
         for (int i = 0; i < TOTAL_COUNTRIES; i++) {
             specs.add(ALL_195_SPECS[i % ALL_195_SPECS.length]);
@@ -523,7 +569,6 @@ public class FlagBall {
             specs.set(j, tmp);
         }
 
-        // Place 195 balls in non-overlapping concentric rings inside the circle
         int index = 0;
         float ringSpacing = ballRadius * 2.18f;
         int ring = 0;
@@ -532,7 +577,7 @@ public class FlagBall {
             if (ring == 0) {
                 CountrySpec spec = specs.get(index++);
                 double angle = random.nextDouble() * Math.PI * 2.0;
-                float speed = baseSpeed * (0.88f + random.nextFloat() * 0.24f);
+                float speed = baseSpeed * (0.90f + random.nextFloat() * 0.30f);
                 balls.add(new FlagBall(
                         spec.code,
                         spec.name,
@@ -558,7 +603,7 @@ public class FlagBall {
                     float by = arenaCenterY + (float) (Math.sin(posAngle) * (rDist + jitterR));
 
                     double velAngle = random.nextDouble() * Math.PI * 2.0;
-                    float speed = baseSpeed * (0.88f + random.nextFloat() * 0.24f);
+                    float speed = baseSpeed * (0.90f + random.nextFloat() * 0.30f);
                     balls.add(new FlagBall(
                             spec.code,
                             spec.name,
