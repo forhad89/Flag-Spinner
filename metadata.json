@@ -1,0 +1,6 @@
+{
+  "name": "Flag Circle Arena",
+  "description": "60 FPS 2D physics simulation battle of 195 country flags inside a rotating circular arena.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

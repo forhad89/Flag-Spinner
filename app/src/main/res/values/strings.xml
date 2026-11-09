@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">Flag Circle Arena</string>
+    <string name="header_title">Last flag in the circle wins</string>
+    <string name="remaining_counter_format">Remaining: %1$d / %2$d</string>
+    <string name="timer_format">Time Left: %1$s</string>
+    <string name="duration_label">Select Battle Duration</string>
+    <string name="duration_2m">2 mins</string>
+    <string name="duration_5m">5 mins</string>
+    <string name="duration_7m">7 mins</string>
+    <string name="duration_15m">15 mins</string>
+    <string name="duration_30m">30 mins</string>
+    <string name="duration_60m">60 mins</string>
+    <string name="start_simulation">Start Simulation</string>
+    <string name="restart_simulation">Play Again</string>
+    <string name="winner_format">%1$s Wins!</string>
+    <string name="winner_subtitle_last_standing">Last Flag Standing in the Circle!</string>
+    <string name="winner_subtitle_time_up">Final Survivor Leaderboard Champion!</string>
+    <string name="eliminated_feed_placeholder">Tap Start Simulation to release 195 flags</string>
+    <string name="eliminated_feed_format">Out: %1$s (%2$s)</string>
+    <string name="trophy_desc">Championship Trophy</string>
+</resources>
